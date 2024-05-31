@@ -1,0 +1,107 @@
+--create table
+CREATE TABLE owner_address_history(
+    owner_address_historyid int not null,
+    ownerid_history int,
+    addressid_history int,
+    start_date TIMESTAMP,
+    end_date TIMESTAMP
+)
+
+create table owner_addresses(
+    addressid int not null,
+    address VARCHAR2(255)
+)
+
+create table owners(
+    ownerid int not null,
+    name VARCHAR2(255),
+    phone VARCHAR2(255),
+    email VARCHAR2(255)
+)
+
+--create sequence
+create sequence owner_seq;
+create sequence addressid_seq;
+create sequence owner_address_history_seq;
+
+--create view
+create VIEW ownerview AS
+select o.ownerid, o.name, o.phone, o.email, oa.address
+from owners o
+join owner_address_history h on o.ownerid = h.ownerid_history
+join owner_addresses oa on h.addressid_history = oa.addressid
+where h.end_date is null;
+
+
+--create package
+CREATE OR REPLACE PACKAGE owners_pkg AS
+    PROCEDURE change_address(
+        ownerid IN INTEGER,
+        new_address IN VARCHAR2
+    );
+    FUNCTION new_owner(
+        new_name IN VARCHAR2,
+        new_phone IN VARCHAR2,
+        new_email IN VARCHAR2,
+        new_address IN VARCHAR2
+    ) RETURN INTEGER;
+END owners_pkg;
+
+
+create or replace PACKAGE BODY owners_pkg AS
+    PROCEDURE change_address(
+        ownerid IN INTEGER,
+        new_address IN VARCHAR2
+    )AS
+        new_address_id INTEGER;
+    BEGIN
+        INSERT INTO owner_addresses (addressid, address)
+        VALUES(addressid_seq.nextval, new_address)
+        RETURNING addressid INTO new_address_id;
+
+        UPDATE owner_address_history
+        SET end_date = SYSDATE
+        WHERE ownerid_history = ownerid AND end_date IS NULL;
+
+        INSERT INTO  owner_address_history(owner_address_historyid,ownerid_history, addressid_history, start_date, end_date)
+        VALUES(owner_address_history_seq.nextval, ownerid, new_address_id, SYSDATE, NULL);
+    END change_address;
+
+    FUNCTION new_owner(
+        new_name IN VARCHAR2,
+        new_phone IN VARCHAR2,
+        new_email IN VARCHAR2,
+        new_address IN VARCHAR2
+    ) RETURN INTEGER AS
+        new_ownerid INTEGER;
+    BEGIN
+        INSERT INTO owners(ownerid, name, phone, email)
+        VALUES(owner_seq.nextval, new_name, new_phone, new_email)
+        RETURNING ownerid INTO new_ownerid;
+
+        IF new_address IS NOT NULL THEN
+            change_address(new_ownerid, new_address);
+        END IF;
+        RETURN new_ownerid;
+    END new_owner;
+END owners_pkg;
+
+--create view trigger
+CREATE OR REPLACE TRIGGER owner_address_view_trigger
+INSTEAD OF INSERT OR UPDATE ON ownerview
+FOR EACH ROW
+DECLARE
+    new_owner_id INTEGER;
+BEGIN
+    IF INSERTING THEN
+
+        new_owner_id := owners_pkg.new_owner(
+            :NEW.name,
+            :NEW.phone,
+            :NEW.email,
+            :NEW.address
+        );
+    ELSIF UPDATING THEN
+        owners_pkg.change_address(:NEW.ownerid, :NEW.address);
+    END IF;
+END;
